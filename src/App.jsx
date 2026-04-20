@@ -856,7 +856,7 @@ export default function App() {
               <h1 className="title">OREGON ENERGY TRANSITION COCKPIT</h1>
               <div className="subtitle">
                 Build the plan in five-year stages. Select a time window, make decisions for that stage,
-                then move to the next window and watch the dashboard respond. Each 1% of effort is
+                then move to the next window and watch the dashboard respond. Each 1% of "effort" is
                 roughly equal to about $100 million per year of investment.
               </div>
             </div>
