@@ -319,7 +319,7 @@ export default function App() {
     if (selectedStage < STAGE_WINDOWS.length - 1) {
       setStagePlans((plans) => {
         const nextPlans = [...plans];
-        nextPlans[selectedStage + 1] = { ...plans[selectedStage] };
+        nextPlans[selectedStage + 1] = { ...DEFAULT };
         return nextPlans;
       });
       setSelectedStage(selectedStage + 1);
