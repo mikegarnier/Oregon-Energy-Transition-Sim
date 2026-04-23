@@ -205,48 +205,121 @@ export default function App() {
 
   const model = useMemo(() => {
     const expectedProgressByYear = [0, 20, 55, 100, 100, 100, 100, 100, 100, 100, 100];
+    const demandByYear = [30, 35, 42, 50, 58, 64, 69, 73, 76, 78, 80];
 
-    const reliabilitySeries = YEARS.map((_, i) => {
-      const plan = stagePlans[Math.max(0, i - 1)] ?? DEFAULT;
-      const score = 65 + plan.support * 0.4 - (plan.wind + plan.solar) * 0.25 - plan.retire * 0.3;
-      return clamp(score, 0, 100);
+    const currentPolicySeries = YEARS.map((_, i) => {
+      if (i === 0) return { ...DEFAULT };
+      return stagePlans[Math.max(0, i - 1)] ?? DEFAULT;
     });
 
-    const budgetSeries = YEARS.map((_, i) => {
-      const plan = stagePlans[Math.max(0, i - 1)] ?? DEFAULT;
-      const schoolsPressure = Math.max(0, plan.schools - 55) * 0.18;
-      const transportPressure = Math.max(0, plan.transport - 55) * 0.18;
-      const schoolsRelief = Math.max(0, 55 - plan.schools) * 0.08;
-      const transportRelief = Math.max(0, 55 - plan.transport) * 0.08;
+    const cumulativeBuildSeries = [];
+    for (let i = 0; i < YEARS.length; i++) {
+      if (i === 0) {
+        cumulativeBuildSeries.push({ wind: 0, solar: 0, support: 0, retire: 0 });
+        continue;
+      }
+
+      const previous = cumulativeBuildSeries[i - 1];
+      const currentStage = stagePlans[i - 1] ?? DEFAULT;
+
+      cumulativeBuildSeries.push({
+        wind: clamp(previous.wind * 0.98 + currentStage.wind * 0.55, 0, 180),
+        solar: clamp(previous.solar * 0.98 + currentStage.solar * 0.55, 0, 180),
+        support: clamp(previous.support * 0.97 + currentStage.support * 0.5, 0, 180),
+        retire: clamp(previous.retire + currentStage.retire * 0.45, 0, 100),
+      });
+    }
+
+    const reliabilitySeries = YEARS.map((_, i) => {
+      const built = cumulativeBuildSeries[i];
+      const current = currentPolicySeries[i];
+
+      const replacementGap = built.retire - (built.wind + built.solar) * 0.45;
+      const retirementPenalty = replacementGap > 20 ? replacementGap * 0.25 : 0;
+
       const score =
-        35 +
-        plan.wind * 0.22 +
-        plan.solar * 0.2 +
-        plan.support * 0.28 +
-        plan.retire * 0.16 +
-        schoolsPressure +
-        transportPressure -
-        schoolsRelief -
-        transportRelief;
+        64 +
+        built.support * 0.32 +
+        current.support * 0.1 -
+        (built.wind + built.solar) * 0.08 -
+        built.retire * 0.1 -
+        retirementPenalty;
+
       return clamp(score, 0, 100);
     });
 
     const emissionsScoreSeries = YEARS.map((_, i) => {
-      const plan = stagePlans[Math.max(0, i - 1)] ?? DEFAULT;
+      const built = cumulativeBuildSeries[i];
       const reliabilityPenalty = reliabilitySeries[i] < 50 ? (50 - reliabilitySeries[i]) * 0.4 : 0;
-      const score =
-        85 -
-        plan.wind * 0.18 -
-        plan.solar * 0.16 -
-        plan.support * 0.05 -
-        plan.retire * 0.28 +
-        reliabilityPenalty;
+      const score = 85 - built.wind * 0.26 - built.solar * 0.24 - built.retire * 0.3 + reliabilityPenalty;
       return clamp(score, 0, 100);
     });
 
     const emissionsProgressSeries = emissionsScoreSeries.map((score) =>
       clamp(((85 - score) / 85) * 100, 0, 100)
     );
+
+    const cleanEnergySurplusSeries = YEARS.map((_, i) => {
+      const built = cumulativeBuildSeries[i];
+      const cleanCapacity =
+        built.wind * 0.26 +
+        built.solar * 0.24 +
+        built.support * 0.16 +
+        built.retire * 0.08;
+
+      const rawSurplus = cleanCapacity - demandByYear[i];
+
+      const reliabilityGate =
+        reliabilitySeries[i] >= 70
+          ? 1
+          : reliabilitySeries[i] >= 60
+          ? 0.75
+          : reliabilitySeries[i] >= 50
+          ? 0.4
+          : 0;
+
+      const lateStageGate = i >= 5 ? 1 : i >= 4 ? 0.5 : 0;
+
+      return clamp(rawSurplus * reliabilityGate * lateStageGate, 0, 100);
+    });
+
+    const budgetSeries = YEARS.map((_, i) => {
+      const current = currentPolicySeries[i];
+      const built = cumulativeBuildSeries[i];
+
+      const schoolsPressure = Math.max(0, current.schools - 55) * 0.18;
+      const transportPressure = Math.max(0, current.transport - 55) * 0.18;
+      const schoolsRelief = Math.max(0, 55 - current.schools) * 0.08;
+      const transportRelief = Math.max(0, 55 - current.transport) * 0.08;
+
+      const maintenancePressure =
+        built.wind * 0.02 +
+        built.solar * 0.02 +
+        built.support * 0.02 +
+        built.retire * 0.01;
+
+      const surplusBudgetRelief =
+        i >= 5
+          ? cleanEnergySurplusSeries[i] * 0.35
+          : i >= 4
+          ? cleanEnergySurplusSeries[i] * 0.18
+          : 0;
+
+      const score =
+        35 +
+        current.wind * 0.16 +
+        current.solar * 0.15 +
+        current.support * 0.2 +
+        current.retire * 0.1 +
+        maintenancePressure +
+        schoolsPressure +
+        transportPressure -
+        schoolsRelief -
+        transportRelief -
+        surplusBudgetRelief;
+
+      return clamp(score, 0, 100);
+    });
 
     const reliabilityLabels = reliabilitySeries.map((score) => {
       if (score >= 70) return "Stable";
@@ -271,14 +344,27 @@ export default function App() {
     });
 
     const activeWarnings = YEARS.map((_, i) => {
+      const built = cumulativeBuildSeries[i];
+      const current = currentPolicySeries[i];
       const warnings = [];
-      const plan = stagePlans[Math.max(0, i - 1)] ?? DEFAULT;
 
       if (reliabilitySeries[i] < 50) warnings.push("Blackout risk increasing");
+
+      if (built.retire > 35 && built.retire > (built.wind + built.solar) * 0.45 + 20) {
+        warnings.push("Retirement risk: fossil fuels are being retired faster than clean energy is replacing them");
+      }
+
+      if ((built.wind + built.solar > 40 && built.support < 30) || (current.wind + current.solar > 35 && current.support < 25)) {
+        warnings.push("Grid overload risk: renewable growth is outpacing system support");
+      }
+
       if (budgetSeries[i] > 80) warnings.push("Budget overload likely");
       if (emissionsLabels[i] === "High" && i >= 3) warnings.push("Emissions goal is slipping past 2040");
-      if (budgetSeries[i] > 70 && plan.schools < 40) warnings.push("Schools and services may face cuts");
-      if (budgetSeries[i] > 70 && plan.transport < 40) warnings.push("Transportation and safety may face cuts");
+      if (budgetSeries[i] > 70 && current.schools < 40) warnings.push("Schools and services may face cuts");
+      if (budgetSeries[i] > 70 && current.transport < 40) warnings.push("Transportation and safety may face cuts");
+      if (i >= 5 && cleanEnergySurplusSeries[i] < 5 && emissionsProgressSeries[i] >= 100) {
+        warnings.push("Net-zero reached, but surplus clean energy is still limited");
+      }
 
       return warnings;
     });
@@ -288,6 +374,7 @@ export default function App() {
       reliabilitySeries,
       budgetSeries,
       emissionsProgressSeries,
+      cleanEnergySurplusSeries,
       reliabilityLabels,
       budgetLabels,
       emissionsLabels,
@@ -309,7 +396,8 @@ export default function App() {
     `Reliability ${model.reliabilityLabels[displayIndex]} | ` +
     `Budget ${model.budgetLabels[displayIndex]} | ` +
     `Emissions ${model.emissionsLabels[displayIndex]} | ` +
-    `Emissions Goal Progress ${Math.round(model.emissionsProgressSeries[displayIndex])}%`;
+    `Emissions Goal Progress ${Math.round(model.emissionsProgressSeries[displayIndex])}% | ` +
+    `Clean Energy Surplus ${Math.round(model.cleanEnergySurplusSeries[displayIndex])}%`;
 
   const lockCurrentStage = () => {
     if (lockedStages[selectedStage]) return;
@@ -319,10 +407,10 @@ export default function App() {
     if (selectedStage < STAGE_WINDOWS.length - 1) {
       setStagePlans((plans) => {
         const nextPlans = [...plans];
-        nextPlans[selectedStage + 1] = { ...plans[selectedStage] };
+        nextPlans[selectedStage + 1] = { ...DEFAULT };
         return nextPlans;
       });
-      setSelectedStage(selectedStage + 1);
+      setSelectedStage((stage) => stage + 1);
     }
   };
 
@@ -471,6 +559,37 @@ export default function App() {
         }
 
         .button-cyan:hover { background: rgba(8, 47, 73, 0.75); }
+
+        .surplus-inline {
+          margin-left: auto;
+          border: 1px solid #155e75;
+          background: rgba(8, 47, 73, 0.45);
+          border-radius: 12px;
+          padding: 10px 14px;
+          text-align: right;
+          min-width: 190px;
+        }
+
+        .surplus-inline-label {
+          font-size: 10px;
+          letter-spacing: 0.25em;
+          text-transform: uppercase;
+          color: #67e8f9;
+          margin-bottom: 4px;
+        }
+
+        .surplus-inline-value {
+          font-size: 24px;
+          font-weight: 900;
+          color: #cffafe;
+          line-height: 1;
+        }
+
+        .surplus-inline-money {
+          font-size: 11px;
+          color: #86efac;
+          margin-top: 4px;
+        }
 
         .timeline {
           display: grid;
@@ -845,6 +964,11 @@ export default function App() {
           .tooltip-box {
             width: 240px;
           }
+          .surplus-inline {
+            margin-left: 0;
+            width: 100%;
+            text-align: left;
+          }
         }
       `}</style>
 
@@ -862,7 +986,7 @@ export default function App() {
             </div>
 
             <div className="controls-row">
-              <TooltipShell text="Choose which five-year stage you are actively planning. Each stage keeps the previous stage's settings as its starting point, so students build a continuous long-term plan.">
+              <TooltipShell text="Choose which five-year stage you are actively planning. Each stage starts from baseline inputs so students must make a fresh decision each time. Infrastructure built in earlier stages still matters.">
                 <div className="window-box">
                   <span className="window-label">Year Window</span>
                   <select
@@ -898,6 +1022,18 @@ export default function App() {
               >
                 Reset to Baseline
               </Button>
+
+              <TooltipShell text="Clean Energy Surplus shows how much clean power Oregon is producing beyond what it needs in the later stages of the plan. Each 1% of surplus is worth about $100 million per year that can be added back into the economy.">
+                <div className="surplus-inline">
+                  <div className="surplus-inline-label">Clean Energy Surplus</div>
+                  <div className="surplus-inline-value">
+                    {Math.round(model.cleanEnergySurplusSeries[displayIndex])}%
+                  </div>
+                  <div className="surplus-inline-money">
+                    ≈ ${(model.cleanEnergySurplusSeries[displayIndex] * 100).toLocaleString()}M/yr
+                  </div>
+                </div>
+              </TooltipShell>
             </div>
           </div>
 
@@ -928,8 +1064,7 @@ export default function App() {
                 </CardHeader>
                 <CardContent>
                   <div className="small-note" style={{ marginBottom: 12 }}>
-                    All values are effort levels from 0–100%. Students can push many categories at once,
-                    but doing so can overload the budget or destabilize the system.
+                    All values are effort levels from 0–100%. Each new stage starts from baseline, but infrastructure built in earlier stages still matters.
                   </div>
 
                   <ControlSlider
@@ -1012,11 +1147,11 @@ export default function App() {
                   tooltip="Shows how much financial pressure this stage is putting on the state. Lower values are safer."
                 />
                 <GaugeDial
-                  label="Emissions"
+                  label="Emissions Remaining"
                   value={100 - model.emissionsProgressSeries[displayIndex]}
                   emoji="🌍"
                   dangerHigh
-                  tooltip="Shows how far the plan still is from the long-term emissions target. Lower is better."
+                  tooltip="Shows how much emissions burden still remains in the system. Lower is better."
                 />
               </div>
 
@@ -1137,7 +1272,7 @@ export default function App() {
                 <CardContent>
                   <p>Baseline Oregon stays affordable, but emissions remain too high.</p>
                   <p>Wind and solar lower emissions, but they need enough support to stay reliable.</p>
-                  <p>Students can choose slower or faster transition paths and explain their reasoning afterward.</p>
+                  <p>In the later stages, strong clean infrastructure can create surplus energy that adds value back into the economy.</p>
                 </CardContent>
               </Card>
             </div>
