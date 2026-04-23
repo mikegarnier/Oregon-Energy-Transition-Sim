@@ -314,15 +314,21 @@ export default function App() {
   const lockCurrentStage = () => {
     if (lockedStages[selectedStage]) return;
 
-    setLockedStages((prev) => prev.map((locked, idx) => (idx === selectedStage ? true : locked)));
+    setLockedStages((prev) =>
+      prev.map((locked, idx) => (idx === selectedStage ? true : locked))
+    );
 
     if (selectedStage < STAGE_WINDOWS.length - 1) {
       setStagePlans((plans) => {
         const nextPlans = [...plans];
+
+        // Reset the next stage to baseline so students must make fresh choices
         nextPlans[selectedStage + 1] = { ...DEFAULT };
+
         return nextPlans;
       });
-      setSelectedStage(selectedStage + 1);
+
+      setSelectedStage((stage) => stage + 1);
     }
   };
 
