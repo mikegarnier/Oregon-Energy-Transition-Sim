@@ -1095,7 +1095,7 @@ export default function App() {
                   />
 
                   <ControlSlider
-                    label="Fossil Retirement"
+                    label="Fossil Fuel Retirement"
                     value={controls.retire}
                     onChange={(v) => update("retire", v)}
                     accentClass="text-red"
